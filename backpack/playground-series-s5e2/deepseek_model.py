@@ -37,7 +37,7 @@ df_y[binary_cols] = df_y[binary_cols].replace({"Yes": 1, "No": 0})
 
 # Separate features and target
 X = df.drop("Price", axis=1)
-y = np.log1p(df["Price"].values)  # Log transformation
+y = df["Price"].values  # Direct price without log transformation
 X_predict = df_y
 
 # Target Encoding for categorical variables
@@ -45,13 +45,9 @@ encoder = TargetEncoder(cols=categorical_cols)
 X_train_cat = encoder.fit_transform(X[categorical_cols], y)
 X_predict_cat = encoder.transform(X_predict[categorical_cols])
 
-# Handle missing values and outliers in numerical variables
+# Handle numerical variables
 numerical_cols = ["Compartments", "Weight Capacity (kg)"]
 for col in numerical_cols:
-    q1 = X[col].quantile(0.05)
-    q3 = X[col].quantile(0.95)
-    X[col] = np.clip(X[col], q1, q3)
-    X_predict[col] = np.clip(X_predict[col], q1, q3)
     X[col] = X[col].fillna(X[col].median())
     X_predict[col] = X_predict[col].fillna(X[col].median())
 
@@ -115,26 +111,26 @@ class EnhancedNeuralNetwork(nn.Module):
         self.network = nn.Sequential(
             nn.Linear(input_size, 1024),
             nn.BatchNorm1d(1024),
-            nn.LeakyReLU(0.1),
-            nn.Dropout(0.3),
+            nn.ReLU(),
+            nn.Dropout(0.4),
             
             nn.Linear(1024, 512),
             nn.BatchNorm1d(512),
-            nn.LeakyReLU(0.1),
-            nn.Dropout(0.3),
+            nn.ReLU(),
+            nn.Dropout(0.4),
             
             nn.Linear(512, 256),
             nn.BatchNorm1d(256),
-            nn.LeakyReLU(0.1),
-            nn.Dropout(0.2),
+            nn.ReLU(),
+            nn.Dropout(0.3),
             
             nn.Linear(256, 128),
             nn.BatchNorm1d(128),
-            nn.LeakyReLU(0.1),
+            nn.ReLU(),
             
             nn.Linear(128, 64),
             nn.BatchNorm1d(64),
-            nn.LeakyReLU(0.1),
+            nn.ReLU(),
             
             nn.Linear(64, 1)
         )
@@ -144,7 +140,7 @@ class EnhancedNeuralNetwork(nn.Module):
 
 # Early Stopping class
 class EarlyStopping:
-    def __init__(self, patience=30, verbose=False, delta=0.0005, path='best_model.pth'):
+    def __init__(self, patience=40, verbose=False, delta=0.00001, path='best_model.pth'):
         self.patience = patience
         self.verbose = verbose
         self.counter = 0
@@ -176,17 +172,17 @@ class EarlyStopping:
 # Training Configuration
 input_size = X_train_processed.shape[1]
 model = EnhancedNeuralNetwork(input_size).to(device)
-criterion = nn.HuberLoss(delta=1.0)
-optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.001)
+criterion = nn.MSELoss()  # Changed to Mean Squared Error
+optimizer = optim.AdamW(model.parameters(), lr=0.0005, weight_decay=0.01)
 scheduler = CosineAnnealingLR(optimizer, T_max=50, eta_min=1e-5)
-early_stopping = EarlyStopping(patience=30, delta=0.0005)
+early_stopping = EarlyStopping(patience=40, delta=0.00001)
 
 # Lists to store losses for plotting
 train_losses = []
 val_losses = []
 
 # Training Loop
-num_epochs = 250
+num_epochs = 300
 
 for epoch in range(num_epochs):
     model.train()
@@ -251,13 +247,13 @@ with torch.no_grad():
         y_pred = model(X_batch)
         predictions.extend(y_pred.cpu().numpy())
 
-# Revert log transformation
-predictions = np.expm1(predictions)
+# Clip negative predictions
+predictions = np.maximum(predictions, 0)
 
 # Save predictions
 sub = pd.DataFrame()
 sub['id'] = test_ids
 sub['Price'] = predictions
-sub.to_csv("enhanced_claude_submissions.csv", index=False)
+sub.to_csv("improved_backpack_price_submissions.csv", index=False)
 
-print("Predictions saved to enhanced_claude_submissions.csv")
+print("Predictions saved to improved_backpack_price_submissions.csv")
