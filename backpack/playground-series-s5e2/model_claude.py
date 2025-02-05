@@ -20,6 +20,10 @@ df_y = pd.read_csv("backpack/playground-series-s5e2/test.csv")
 test_ids = df_y["id"]
 df_y = df_y.drop("id", axis=1)
 
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+
 # Handle missing values in categorical variables
 categorical_cols = ["Brand", "Material", "Size", "Style", "Color"]
 for col in categorical_cols:
@@ -89,43 +93,47 @@ class BagDataset(Dataset):
     def __getitem__(self, idx):
         return (self.X[idx], self.y[idx]) if self.y is not None else self.X[idx]
 
-# Create datasets and dataloaders
+# Create datasets and dataloaders with batch size adjusted
 train_dataset = BagDataset(X_train, y_train)
-train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 
 val_dataset = BagDataset(X_val, y_val)
-val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False)
+val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
 
-# Simplified Neural Network model
-class SimplifiedNeuralNetwork(nn.Module):
+# Improved Neural Network model
+class ImprovedNeuralNetwork(nn.Module):
     def __init__(self, input_size):
-        super(SimplifiedNeuralNetwork, self).__init__()
+        super(ImprovedNeuralNetwork, self).__init__()
         self.network = nn.Sequential(
-            nn.Linear(input_size, 256),
+            nn.Linear(input_size, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, 256),
             nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(256, 128),
             nn.ReLU(),
-            nn.Dropout(0.5),
+            nn.Dropout(0.3),
             nn.Linear(128, 64),
             nn.ReLU(),
             nn.Linear(64, 32),
             nn.ReLU(),
             nn.Linear(32, 1)
         )
-    
+
     def forward(self, x):
         return self.network(x).squeeze()
 
-# Early Stopping class
+# Early Stopping class with adjusted patience and delta
 class EarlyStopping:
-    def __init__(self, patience=10, verbose=False, path='checkpoint.pth'):
+    def __init__(self, patience=15, verbose=False, delta=0.001, path='best_model.pth'):
         self.patience = patience
         self.verbose = verbose
         self.counter = 0
         self.best_score = None
         self.early_stop = False
         self.val_loss_min = np.Inf
+        self.delta = delta
         self.path = path
 
     def __call__(self, val_loss, model):
@@ -134,7 +142,7 @@ class EarlyStopping:
         if self.best_score is None:
             self.best_score = score
             self.save_checkpoint(val_loss, model)
-        elif score < self.best_score:
+        elif score < self.best_score + self.delta:
             self.counter += 1
             if self.counter >= self.patience:
                 self.early_stop = True
@@ -149,14 +157,14 @@ class EarlyStopping:
 
 # Training Configuration
 input_size = X_train_processed.shape[1]
-model = SimplifiedNeuralNetwork(input_size)
+model = ImprovedNeuralNetwork(input_size)
 criterion = nn.MSELoss()  # Usar MSE, pero calcular RMSE durante el entrenamiento
-optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.01)
-scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10, verbose=True)
-early_stopping = EarlyStopping(patience=10, verbose=True, path='best_model.pth')
+optimizer = optim.Adam(model.parameters(), lr=0.0005, weight_decay=0.001)
+scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=5, verbose=True)
+early_stopping = EarlyStopping(patience=15, verbose=True, delta=0.001, path='best_model.pth')
 
 # Training Loop
-num_epochs = 200
+num_epochs = 250
 
 for epoch in range(num_epochs):
     model.train()
@@ -169,7 +177,7 @@ for epoch in range(num_epochs):
         loss.backward()
         optimizer.step()
         train_loss += loss.item()
-    
+
     avg_train_loss = train_loss / len(train_loader)
 
     # Validation
@@ -180,7 +188,7 @@ for epoch in range(num_epochs):
             y_pred = model(X_batch)
             loss = torch.sqrt(criterion(y_pred, y_batch))  # RMSE
             val_loss += loss.item()
-    
+
     avg_val_loss = val_loss / len(val_loader)
 
     print(f"Epoch {epoch+1}, Train RMSE: {avg_train_loss:.4f}, Val RMSE: {avg_val_loss:.4f}")
@@ -197,7 +205,7 @@ model.load_state_dict(torch.load('best_model.pth'))
 model.eval()
 
 predict_dataset = BagDataset(X_predict_processed)
-predict_loader = DataLoader(predict_dataset, batch_size=64, shuffle=False)
+predict_loader = DataLoader(predict_dataset, batch_size=32, shuffle=False)
 
 predictions = []
 with torch.no_grad():
@@ -211,4 +219,4 @@ sub['id'] = test_ids
 sub['Price'] = predictions
 sub.to_csv("improved_claude_submissions.csv", index=False)
 
-print("Predictions saved to improved_claude_submissions_mac.csv")
+print("Predictions saved to improved_claude_submissions.csv")
