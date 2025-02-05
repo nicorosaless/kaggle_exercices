@@ -8,6 +8,7 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.model_selection import train_test_split
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import time
+import matplotlib.pyplot as plt  # Importar matplotlib para graficar
 
 # Set random seeds
 torch.manual_seed(42)
@@ -75,9 +76,9 @@ X_predict_processed = np.hstack([X_predict_cat, X_predict_num, binary_predict])
 
 # Split data into train and validation sets
 X_train, X_val, y_train, y_val = train_test_split(
-    X_train_processed, 
-    y, 
-    test_size=0.2, 
+    X_train_processed,
+    y,
+    test_size=0.2,
     random_state=42
 )
 
@@ -159,9 +160,14 @@ class EarlyStopping:
 input_size = X_train_processed.shape[1]
 model = ImprovedNeuralNetwork(input_size)
 criterion = nn.MSELoss()  # Usar MSE, pero calcular RMSE durante el entrenamiento
-optimizer = optim.Adam(model.parameters(), lr=0.0005, weight_decay=0.001)
+#optimizer = optim.Adam(model.parameters(), lr=0.0005, weight_decay=0.001) # Usando Adam
+optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=0.0005) # Usando AdamW
 scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=5, verbose=True)
-early_stopping = EarlyStopping(patience=15, verbose=True, delta=0.001, path='best_model.pth')
+early_stopping = EarlyStopping(patience=25, verbose=True, delta=0.001, path='best_model.pth')
+
+# Lists para almacenar las pérdidas para graficar
+train_losses = []
+val_losses = []
 
 # Training Loop
 num_epochs = 250
@@ -179,6 +185,7 @@ for epoch in range(num_epochs):
         train_loss += loss.item()
 
     avg_train_loss = train_loss / len(train_loader)
+    train_losses.append(avg_train_loss) # Guardar la pérdida de entrenamiento
 
     # Validation
     model.eval()
@@ -190,6 +197,7 @@ for epoch in range(num_epochs):
             val_loss += loss.item()
 
     avg_val_loss = val_loss / len(val_loader)
+    val_losses.append(avg_val_loss) # Guardar la pérdida de validación
 
     print(f"Epoch {epoch+1}, Train RMSE: {avg_train_loss:.4f}, Val RMSE: {avg_val_loss:.4f}")
 
@@ -199,6 +207,17 @@ for epoch in range(num_epochs):
     if early_stopping.early_stop:
         print("Early stopping")
         break
+
+# Graficar las pérdidas
+plt.figure(figsize=(10, 6))
+plt.plot(train_losses, label='Training Loss (RMSE)')
+plt.plot(val_losses, label='Validation Loss (RMSE)')
+plt.xlabel('Epoch')
+plt.ylabel('RMSE')
+plt.title('Training and Validation Loss Curve')
+plt.legend()
+plt.grid(True)
+plt.show()
 
 # Prediction
 model.load_state_dict(torch.load('best_model.pth'))
