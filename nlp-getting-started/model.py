@@ -126,7 +126,7 @@ class ImprovedNeuralNetwork(nn.Module):
         )
 
     def forward(self, x):
-        return self.layers(x).squeeze()
+        return torch.sigmoid(self.layers(x)).squeeze()
 
 # Training Configuration
 input_size = X_train.shape[1]
@@ -180,6 +180,20 @@ for epoch in range(num_epochs):
         best_loss = avg_val_loss
         best_model_state_dict = model.state_dict()
         torch.save(best_model_state_dict, 'best_model.pth')
+
+model.load_state_dict(best_model_state_dict)
+model.eval()
+
+with torch.no_grad():
+    y_pred = model(torch.tensor(X_test , dtype=torch.float32))
+
+# Guardar predicciones
+sub = pd.DataFrame()
+sub['id'] = df_test['id']
+sub['Price'] = y_pred.numpy()
+sub.to_csv("submissions.csv", index=False)
+
+print("Predictions saved to submissions.csv SIGMA")
 
 
 

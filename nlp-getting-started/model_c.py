@@ -177,9 +177,9 @@ def train_model():
     val_dataset = BagDataset(X_val_normalized, y_val)
     test_dataset = BagDataset(X_test_normalized)
 
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
     # Initialize model and training components
     input_size = X_train.shape[1]
@@ -190,7 +190,7 @@ def train_model():
     optimizer = optim.AdamW(model.parameters(), lr=0.0005, weight_decay=0.001)
     
     # Usar scheduler cíclico
-    num_epochs = 100
+    num_epochs = 200
     scheduler = optim.lr_scheduler.OneCycleLR(
         optimizer,
         max_lr=0.001,
@@ -231,8 +231,8 @@ def train_model():
             scheduler.step()
             
             train_loss += loss.item()
-            train_preds.extend(y_pred.detach().cpu().numpy())
-            train_targets.extend(y_batch.cpu().numpy())
+            train_preds.extend(y_pred.detach().cpu().numpy().flatten().tolist())
+            train_targets.extend(y_batch.cpu().numpy().flatten().tolist())
         
         # Calcular métricas de entrenamiento
         train_preds = np.array(train_preds) > 0.5
@@ -246,8 +246,8 @@ def train_model():
         with torch.no_grad():
             for X_batch, y_batch in val_loader:
                 y_pred = model(X_batch)
-                val_preds.extend(y_pred.cpu().numpy())
-                val_targets.extend(y_batch.cpu().numpy())
+                val_preds.extend(y_pred.cpu().numpy().flatten().tolist())
+                val_targets.extend(y_batch.cpu().numpy().flatten().tolist())
         
         # Encontrar el mejor threshold
         thresholds = np.arange(0.3, 0.7, 0.01)
