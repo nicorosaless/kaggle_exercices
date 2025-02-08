@@ -15,10 +15,14 @@ import torch.nn as nn
 import torch.optim as optim
 from transformers import AutoModel, AutoTokenizer
 import torch.nn.functional as F
+from torch.serialization import add_safe_globals
+add_safe_globals(['numpy.core.multiarray.scalar'])
 
 # Set random seeds
 torch.manual_seed(42)
 np.random.seed(42)
+
+# Agregar los globals seguros para numpy
 
 class EarlyStopping:
     def __init__(self, patience=7, min_delta=1e-4, mode='max'):
@@ -209,7 +213,7 @@ def train_model():
         window=10,
         min_count=1,
         workers=4,
-        sg=1  # Skip-gram model
+        sg=1
     )
     
     # Create embeddings
@@ -217,7 +221,6 @@ def train_model():
         vectors = [model.wv[word] for word in tokens if word in model.wv]
         if not vectors:
             return np.zeros(model.vector_size)
-        # Use weighted average based on IDF
         return np.mean(vectors, axis=0)
     
     df_train['embeddings'] = df_train['tokens'].apply(lambda x: text_to_vector(x, w2v_model))
@@ -228,8 +231,8 @@ def train_model():
     y = df_train['target'].values
     X_test = np.vstack(df_test['embeddings'].values)
     
-    # Initialize K-Fold
-    n_splits = 5
+    # Initialize K-Fold con solo 3 splits
+    n_splits = 3  # Cambiado de 5 a 3
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
     
     # Lists to store predictions
@@ -243,7 +246,7 @@ def train_model():
         X_train, X_val = X[train_idx], X[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
         
-        # Create datasets with shared tokenizer
+        # Create datasets
         train_dataset = HybridDataset(
             df_train['text'].iloc[train_idx].values,
             X_train,
@@ -261,45 +264,36 @@ def train_model():
         train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=32)
         
-        # Initialize model and training components
-        print(f"\nInitializing model for fold {fold + 1}...")
-        model = HybridModel(embedding_dim=200)
-        model = model.to(device)
-        
-        # Move to device and handle memory
-        def move_batch_to_device(batch, device):
-            return {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
+        # Initialize model
+        model = HybridModel(embedding_dim=200).to(device)
         
         criterion = FocalLoss(gamma=2)
-        optimizer = optim.AdamW(
-            [
-                {'params': model.bert.parameters(), 'lr': 1e-5},
-                {'params': model.w2v_encoder.parameters()},
-                {'params': model.bert_encoder.parameters()},
-                {'params': model.classifier.parameters()}
-            ],
-            lr=2e-4,
-            weight_decay=0.01
-        )
+        optimizer = optim.AdamW([
+            {'params': model.bert.parameters(), 'lr': 1e-5},
+            {'params': model.w2v_encoder.parameters()},
+            {'params': model.bert_encoder.parameters()},
+            {'params': model.classifier.parameters()}
+        ], lr=2e-4)
         
+        # Modificar para solo 3 epochs
+        n_epochs = 3  # Cambiado de 10 a 3
         scheduler = optim.lr_scheduler.OneCycleLR(
             optimizer,
             max_lr=[1e-5, 2e-4, 2e-4, 2e-4],
-            epochs=10,
-            steps_per_epoch=len(train_loader),
-            pct_start=0.1
+            epochs=n_epochs,
+            steps_per_epoch=len(train_loader)
         )
         
-        early_stopping = EarlyStopping(patience=3, mode='max')
+        early_stopping = EarlyStopping(patience=2)  # Reducido de 3 a 2
         best_val_f1 = 0
         
-        for epoch in range(10):
+        for epoch in range(n_epochs):
             # Training
             model.train()
             for batch_idx, batch in enumerate(train_loader):
-                batch = move_batch_to_device(batch, device)
-                optimizer.zero_grad()
+                batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
                 
+                optimizer.zero_grad()
                 outputs = model(
                     batch['input_ids'],
                     batch['attention_mask'],
@@ -309,14 +303,12 @@ def train_model():
                 loss = criterion(outputs.squeeze(), batch['label'])
                 loss.backward()
                 
-                # Gradient clipping
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                
                 optimizer.step()
                 scheduler.step()
                 
                 if batch_idx % 20 == 0:
-                    print(f"Batch {batch_idx}/{len(train_loader)}, Loss: {loss.item():.4f}")
+                    print(f"Epoch {epoch+1}, Batch {batch_idx}/{len(train_loader)}, Loss: {loss.item():.4f}")
             
             # Validation
             model.eval()
@@ -325,6 +317,7 @@ def train_model():
             
             with torch.no_grad():
                 for batch in val_loader:
+                    batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
                     outputs = model(
                         batch['input_ids'],
                         batch['attention_mask'],
@@ -334,11 +327,10 @@ def train_model():
                     val_preds.extend(preds.cpu().numpy())
                     val_labels.extend(batch['label'].cpu().numpy())
             
-            # Calculate metrics
             val_preds = np.array(val_preds)
             val_labels = np.array(val_labels)
             
-            # Find optimal threshold
+            # Buscar mejor threshold
             best_threshold = 0.5
             best_f1 = 0
             
@@ -350,22 +342,23 @@ def train_model():
             
             print(f"Epoch {epoch+1}, Val F1: {best_f1:.4f}, Threshold: {best_threshold:.3f}")
             
-            # Early stopping
+            # Guardar mejor modelo usando torch.save con weights_only=False
             if best_f1 > best_val_f1:
                 best_val_f1 = best_f1
-                torch.save({
-                    'model_state': model.state_dict(),
-                    'threshold': best_threshold
-                }, f'best_model_fold{fold}.pth')
-            
-            early_stopping(best_f1)
-            if early_stopping.early_stop:
+                save_dict = {
+                    'model_state_dict': model.state_dict(),
+                    'threshold': torch.tensor(best_threshold)
+                }
+                torch.save(save_dict, f'best_model_fold{fold}.pth')
+                
+
+            if early_stopping(best_f1):
                 break
         
-        # Load best model for predictions
-        checkpoint = torch.load(f'best_model_fold{fold}.pth')
-        model.load_state_dict(checkpoint['model_state'])
-        threshold = checkpoint['threshold']
+        
+        checkpoint = torch.load(f'best_model_fold{fold}.pth', weights_only=False)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        threshold = float(checkpoint['threshold'])
         
         # Make predictions
         model.eval()
@@ -373,12 +366,14 @@ def train_model():
             # OOF predictions
             val_dataset = HybridDataset(
                 df_train['text'].iloc[val_idx].values,
-                X_val
+                X_val,
+                tokenizer=tokenizer
             )
             val_loader = DataLoader(val_dataset, batch_size=32)
             
             fold_preds = []
             for batch in val_loader:
+                batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
                 outputs = model(
                     batch['input_ids'],
                     batch['attention_mask'],
@@ -392,12 +387,14 @@ def train_model():
             # Test predictions
             test_dataset = HybridDataset(
                 df_test['text'].values,
-                X_test
+                X_test,
+                tokenizer=tokenizer
             )
             test_loader = DataLoader(test_dataset, batch_size=32)
             
             fold_test_preds = []
             for batch in test_loader:
+                batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
                 outputs = model(
                     batch['input_ids'],
                     batch['attention_mask'],
@@ -408,7 +405,7 @@ def train_model():
             
             test_predictions += (np.array(fold_test_preds) > threshold).astype(int)
     
-    # Average test predictions across folds
+    # Average test predictions
     test_predictions = (test_predictions / n_splits > 0.5).astype(int)
     
     # Calculate OOF score
