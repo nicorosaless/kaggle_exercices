@@ -425,7 +425,7 @@ def train_model():
                 break
         
         # Load best model and make predictions
-        checkpoint = torch.load(f'best_model_fold{fold}.pth')
+        checkpoint = torch.load(f'best_model_fold{fold}.pth', weights_only=False)
         model.load_state_dict(checkpoint['model_state_dict'])
         threshold = float(checkpoint['threshold'])
         
